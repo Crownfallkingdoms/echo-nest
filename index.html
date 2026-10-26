@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <title>Echo Nest - Market Prototype</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a1a2e;
+      color: #e0e0e0;
+      font-family: 'Courier New', monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 15px;
+    }
+    h1 { color: #ff9f43; margin-bottom: 8px; text-shadow: 2px 2px 0 #000; }
+    #top-ui {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+    }
+    .stat {
+      background: #16213e;
+      padding: 7px 14px;
+      border: 3px solid #0f3460;
+      border-radius: 8px;
+      font-size: 16px;
+    }
+    button {
+      background: #e94560;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      font-size: 14px;
+      font-family: inherit;
+      cursor: pointer;
+      border-radius: 6px;
+      border-bottom: 3px solid #c81e3a;
+    }
+    button:hover { background: #ff6b81; }
+    button:active { transform: translateY(2px); }
+    button:disabled { background: #555; border-color: #333; cursor: not-allowed; }
+    .tab-btn { background: #0f3460; border-bottom-color: #071e36; }
+    .tab-btn.active { background: #e94560; border-bottom-color: #c81e3a; }
+
+    #game-container { border: 4px solid #0f3460; background: #0f3460; }
+    canvas {
+      display: block;
+      background: linear-gradient(#87CEEB 0%, #98D8AA 70%, #5D8A66 100%);
+      image-rendering: pixelated;
+    }
+
+    #panels { width: 800px; margin-top: 12px; }
+    .panel { display: none; background: #16213e; border: 3px solid #0f3460; border-radius: 10px; padding: 12px; }
+    .panel.active { display: block; }
+
+    #inventory, #market-list, #my-listings {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-top: 8px;
+    }
+    .card {
+      width: 90px;
+      background: #0f3460;
+      border: 3px solid #1a1a2e;
+      border-radius: 10px;
+      padding: 8px 4px;
+      text-align: center;
+      font-size: 12px;
+    }
+    .card .emoji { font-size: 28px; }
+    .card .name { color: #ff9f43; margin: 2px 0; }
+    .card .price { color: #98FB98; }
+    .card button { margin-top: 4px; padding: 4px 8px; font-size: 12px; }
+
+    #message {
+      margin-top: 10px;
+      height: 22px;
+      color: #ff9f43;
+      font-size: 15px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <h1>Echo Nest</h1>
+
+  <div id="top-ui">
+    <div class="stat">Gems: <span id="gems">80</span></div>
+    <button id="openCrate">Open Crate (25)</button>
+    <button class="tab-btn active" data-tab="play">Nest</button>
+    <button class="tab-btn" data-tab="inventory">Inventory</button>
+    <button class="tab-btn" data-tab="market">Markt</button>
+    <button class="tab-btn" data-tab="listings">Mijn Listings</button>
+  </div>
+
+  <div id="game-container">
+    <canvas id="canvas" width="800" height="380"></canvas>
+  </div>
+
+  <div id="message">Sleep een beestje naar het nest of ga naar de Markt!</div>
+
+  <div id="panels">
+    <!-- PLAY / NEST is the canvas itself -->
+
+    <div id="panel-inventory" class="panel">
+      <h3 style="text-align:center; margin-bottom:8px;">Jouw Beestjes</h3>
+      <div id="inventory"></div>
+    </div>
+
+    <div id="panel-market" class="panel">
+      <h3 style="text-align:center; margin-bottom:8px;">Markt (andere spelers)</h3>
+      <div id="market-list"></div>
+    </div>
+
+    <div id="panel-listings" class="panel">
+      <h3 style="text-align:center; margin-bottom:8px;">Mijn te koop staande beestjes</h3>
+      <div id="my-listings"></div>
+      <p style="text-align:center; margin-top:10px; font-size:13px; color:#aaa;">
+        Klik op een beestje in Inventory om het te koop te zetten
+      </p>
+    </div>
+  </div>
+
+  <script>
+    // ========== DATA ==========
+    const BEASTS = {
+      fluff: { name: "Fluff", emoji: "🐰", color: "#FFB6C1", sound: 440 },
+      pip:   { name: "Pip",   emoji: "🐦", color: "#87CEFA", sound: 587 },
+      momo:  { name: "Momo",  emoji: "🐱", color: "#FFD700", sound: 349 },
+      bloop: { name: "Bloop", emoji: "🐸", color: "#98FB98", sound: 523 },
+      nori:  { name: "Nori",  emoji: "🦊", color: "#FF8C42", sound: 392 },
+      puff:  { name: "Puff",  emoji: "🐧", color: "#B0E0E6", sound: 494 }
+    };
+
+    let gems = 80;
+    let inventory = ["fluff", "pip", "momo", "bloop"];
+    let placed = [];
+    let myListings = []; // {id, price}
+    let dragging = null;
+
+    // Gesimuleerde andere spelers op de markt
+    let market = [
+      { id: "nori",  price: 35, seller: "PixelFox" },
+      { id: "puff",  price: 28, seller: "CloudHopper" },
+      { id: "fluff", price: 18, seller: "NestKing" },
+      { id: "momo",  price: 42, seller: "EchoQueen" },
+      { id: "bloop", price: 22, seller: "RibbitRay" }
+    ];
+
+    // ========== AUDIO ==========
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playTone(freq, duration = 0.15) {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.frequency.value = freq;
+      osc.type = "square";
+      gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+      osc.start();
+      osc.stop(audioCtx.currentTime + duration);
+    }
+
+    // ========== CANVAS ==========
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const GROUND_Y = 340;
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // platform
+      ctx.fillStyle = "#5D4037";
+      ctx.fillRect(40, GROUND_Y, 720, 28);
+      ctx.fillStyle = "#8D6E63";
+      ctx.fillRect(40, GROUND_Y, 720, 7);
+
+      for (const b of placed) {
+        ctx.fillStyle = "rgba(0,0,0,0.2)";
+        ctx.beginPath();
+        ctx.ellipse(b.x, GROUND_Y + 4, 20, 7, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = b.color;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, 20, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "#222";
+        ctx.beginPath();
+        ctx.arc(b.x - 6, b.y - 4, 3.5, 0, Math.PI * 2);
+        ctx.arc(b.x + 6, b.y - 4, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.font = "18px serif";
+        ctx.textAlign = "center";
+        ctx.fillText(b.emoji, b.x, b.y + 6);
+      }
+    }
+
+    function updatePhysics() {
+      for (const b of placed) {
+        if (!b.settled) {
+          b.vy += 0.55;
+          b.y += b.vy;
+          if (b.y > GROUND_Y - 20) {
+            b.y = GROUND_Y - 20;
+            b.vy *= -0.35;
+            if (Math.abs(b.vy) < 1.2) {
+              b.vy = 0;
+              b.settled = true;
+              playTone(b.sound);
+              gems += 1;
+              updateUI();
+            }
+          }
+          // collision
+          for (const other of placed) {
+            if (other === b) continue;
+            const dx = b.x - other.x;
+            const dy = b.y - other.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist < 40) {
+              const angle = Math.atan2(dy, dx);
+              b.x += Math.cos(angle) * 1.8;
+              other.x -= Math.cos(angle) * 1.8;
+              playTone((b.sound + other.sound)/2, 0.18);
+              gems += 3;
+              updateUI();
+            }
+          }
+        }
+      }
+      draw();
+      requestAnimationFrame(updatePhysics);
+    }
+
+    // ========== UI & TABS ==========
+    function showTab(tab) {
+      document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+      document.querySelector(`[data-tab="${tab}"]`).classList.add("active");
+
+      document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+      if (tab === "inventory") document.getElementById("panel-inventory").classList.add("active");
+      if (tab === "market")    document.getElementById("panel-market").classList.add("active");
+      if (tab === "listings")  document.getElementById("panel-listings").classList.add("active");
+    }
+
+    document.querySelectorAll(".tab-btn").forEach(btn => {
+      btn.addEventListener("click", () => showTab(btn.dataset.tab));
+    });
+
+    function updateUI() {
+      document.getElementById("gems").textContent = gems;
+      document.getElementById("openCrate").disabled = gems < 25;
+
+      // Inventory
+      const inv = document.getElementById("inventory");
+      inv.innerHTML = "";
+      inventory.forEach((id, index) => {
+        const data = BEASTS[id];
+        const el = document.createElement("div");
+        el.className = "card";
+        el.innerHTML = `
+          <div class="emoji">${data.emoji}</div>
+          <div class="name">${data.name}</div>
+          <button onclick="listForSale('${id}', ${index})">Te koop zetten</button>
+        `;
+        // drag support
+        el.draggable = true;
+        el.addEventListener("dragstart", e => {
+          dragging = { id, index };
+          e.dataTransfer.setData("text/plain", id);
+        });
+        inv.appendChild(el);
+      });
+
+      // Market
+      const mlist = document.getElementById("market-list");
+      mlist.innerHTML = "";
+      market.forEach((item, i) => {
+        const data = BEASTS[item.id];
+        const el = document.createElement("div");
+        el.className = "card";
+        el.innerHTML = `
+          <div class="emoji">${data.emoji}</div>
+          <div class="name">${data.name}</div>
+          <div class="price">${item.price} Gems</div>
+          <div style="font-size:10px;color:#aaa">${item.seller}</div>
+          <button onclick="buyFromMarket(${i})">Kopen</button>
+        `;
+        mlist.appendChild(el);
+      });
+
+      // My listings
+      const mylist = document.getElementById("my-listings");
+      mylist.innerHTML = "";
+      myListings.forEach((item, i) => {
+        const data = BEASTS[item.id];
+        const el = document.createElement("div");
+        el.className = "card";
+        el.innerHTML = `
+          <div class="emoji">${data.emoji}</div>
+          <div class="name">${data.name}</div>
+          <div class="price">${item.price} Gems</div>
+          <button onclick="cancelListing(${i})">Terughalen</button>
+        `;
+        mylist.appendChild(el);
+      });
+    }
+
+    // ========== MARKET FUNCTIES ==========
+    window.listForSale = function(id, invIndex) {
+      const price = prompt(`Voor hoeveel Gems wil je ${BEASTS[id].name} te koop zetten?`, "25");
+      if (!price || isNaN(price) || price < 1) return;
+      myListings.push({ id, price: Number(price) });
+      inventory.splice(invIndex, 1);
+      updateUI();
+      document.getElementById("message").textContent = `${BEASTS[id].name} staat nu te koop voor ${price} Gems!`;
+      showTab("listings");
+    };
+
+    window.buyFromMarket = function(index) {
+      const item = market[index];
+      if (gems < item.price) {
+        document.getElementById("message").textContent = "Niet genoeg Gems!";
+        return;
+      }
+      gems -= item.price;
+      inventory.push(item.id);
+      market.splice(index, 1);
+      // soms komt er een nieuw listing bij (simulatie)
+      if (Math.random() > 0.6) {
+        const keys = Object.keys(BEASTS);
+        market.push({
+          id: keys[Math.floor(Math.random()*keys.length)],
+          price: 15 + Math.floor(Math.random()*40),
+          seller: ["NestKing","EchoQueen","PixelFox","CloudHopper"][Math.floor(Math.random()*4)]
+        });
+      }
+      updateUI();
+      document.getElementById("message").textContent = `Je hebt ${BEASTS[item.id].name} gekocht!`;
+    };
+
+    window.cancelListing = function(index) {
+      const item = myListings[index];
+      inventory.push(item.id);
+      myListings.splice(index, 1);
+      updateUI();
+      document.getElementById("message").textContent = `${BEASTS[item.id].name} is terug in je inventory.`;
+    };
+
+    // ========== DROP OP CANVAS ==========
+    canvas.addEventListener("dragover", e => e.preventDefault());
+    canvas.addEventListener("drop", e => {
+      e.preventDefault();
+      if (!dragging) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const data = BEASTS[dragging.id];
+      placed.push({
+        id: dragging.id, x, y, vy: 0, settled: false,
+        color: data.color, emoji: data.emoji, sound: data.sound
+      });
+      inventory.splice(dragging.index, 1);
+      dragging = null;
+      updateUI();
+      document.getElementById("message").textContent = `${data.name} is geplaatst!`;
+    });
+
+    // ========== CRATE ==========
+    document.getElementById("openCrate").addEventListener("click", () => {
+      if (gems < 25) return;
+      gems -= 25;
+      const keys = Object.keys(BEASTS);
+      const random = keys[Math.floor(Math.random() * keys.length)];
+      inventory.push(random);
+      updateUI();
+      document.getElementById("message").textContent = `Crate geopend! Je kreeg ${BEASTS[random].name}!`;
+      playTone(660, 0.25);
+    });
+
+    // start
+    updateUI();
+    updatePhysics();
+  </script>
+</body>
+</html>
